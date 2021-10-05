@@ -1,0 +1,4 @@
+ray[rllib]
+pandas
+gym
+numpy

@@ -62,7 +62,7 @@ parser.add_argument(
 parser.add_argument(
     "--stop-timesteps",
     type=int,
-    default=100000,
+    default=1000000,
     help="Number of timesteps to train.")
 parser.add_argument(
     "--stop-reward",
@@ -163,6 +163,11 @@ if __name__ == "__main__":
         "my_model", TorchCustomModel
         if args.framework == "torch" else CustomModel)
 
+    num_gpus = int(os.environ.get("RLLIB_NUM_GPUS", "0"))
+    # If we don't see any GPUs via the above, we'll manually set num_gpus to 1 if cuda is available
+    if num_gpus == 0 and torch.cuda.is_available():
+        num_gpus = 1
+
     config = {
         "env": BeamEnv,  # or "corridor" if registered above
         "env_config": {
@@ -170,7 +175,7 @@ if __name__ == "__main__":
 #           "corridor_length": 5,
         },
         # Use GPUs iff `RLLIB_NUM_GPUS` env var set to > 0.
-        "num_gpus": int(os.environ.get("RLLIB_NUM_GPUS", "0")),
+        "num_gpus": num_gpus,
         "model": {
             "custom_model": "my_model",
             "vf_share_layers": True,
@@ -194,7 +199,7 @@ if __name__ == "__main__":
         ppo_config.update(config)
         # use fixed learning rate instead of grid search (needs tune)
         ppo_config["lr"] = 1e-3
-        trainer = ppo.PPOTrainer(config=ppo_config, env=SimpleCorridor)
+        trainer = ppo.PPOTrainer(config=ppo_config, env=BeamEnv)
         # run manual training loop and print results after each iteration
         for _ in range(args.stop_iters):
             result = trainer.train()
