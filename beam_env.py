@@ -10,13 +10,15 @@ class BeamEnv(gym.Env):
             n_beams: how many slices in our pie (a discretized circle)
         '''
         render_gui = config.get("render", False)
-        n_beams = config.get("n_beams", 8)
+        n_beams = config.get("n_beams", 16)
+        n_paths = config.get("n_paths", 4)
         self.observation_space = gym.spaces.MultiBinary(n_beams)
         # TODO: improve this action spacce?
         # This is a very naive version of the action space which allows for overlapping groups. But overlapping groups
         # are strictly redundant (right?)
         self.action_space = gym.spaces.MultiDiscrete([n_beams, n_beams-2, n_beams, n_beams-2])
         self.n_beams = n_beams
+        self.n_paths = n_paths
         self.render_gui = render_gui
         if render_gui:
             self.frame_delay = 100
@@ -30,8 +32,13 @@ class BeamEnv(gym.Env):
             self.groups_img = np.zeros((2, n_beams, 3))
 
     def reset(self):
-        n_paths = np.random.randint(2, 4)
-        # randomly initialize some paths whose location our algorithm will try to pinpoint
+        self.n_step = 0
+        if self.n_paths is None:
+            # randomly initialize some paths whose location our algorithm will try to pinpoint
+            n_paths = np.random.randint(2, 5)
+        else:
+            # Use a fixed number of paths
+            n_paths = self.n_paths
         path_idxs = np.random.choice(self.n_beams, n_paths, replace=False)
         self.state = np.ones(self.n_beams, dtype=bool)
         self.true_state = np.zeros(self.n_beams, dtype=bool)
@@ -108,18 +115,73 @@ class Agent(object):
     def reset(self):
         return self.env.reset()
 
-    def act(self):
+    def act(self, obs):
         raise NotImplementedError
 
 
-class LazyAgent(Agent):
+class SequentialAgent(Agent):
     def __init__(self, env):
-        super(LazyAgent, self).__init__(self, env)
+        super(SequentialAgent, self).__init__(env)
 
     def act(self, obs):
-        '''Test one beam at a time.'''
-        return self.env.step((self.n_step*2, self.n_step*2+1,
-                              self.n_step*2+1, (self.n_step+1)*2))
+        '''Test individual beams sequentially.'''
+        return self.env.step((self.n_step*2, 0,
+                              self.n_step*2+1, 0))
+
+class MergeAgent(Agent):
+    '''Divide and conquer. If either group tests positive, break it down the middle into two new groups and recurse,
+    then merge the results.'''
+    def __init__(self, env):
+        super(MergeAgent, self).__init__(env)
+
+    def reset(self):
+        self.n_step = 0
+        return super(MergeAgent, self).reset()
+
+    def play_episode(self):
+        obs = self.reset()
+        cum_rew = self.act(obs)
+        return cum_rew, self.n_step
+
+    def act(self, obs):
+        assert len(obs.shape) == 1
+        pos = np.arange(obs.shape[0])
+        obs, cum_rew, done, info = self.split_test(pos, obs)
+        return cum_rew
+
+    def split_test(self, pos, obs):
+        # we know pos is always an incremental sequence
+        mid = pos[len(pos) // 2]
+        # weird because actions are each group's start, then the __distance__ to its end (not the index of the endpoint)
+        g0 = pos[0]
+        g0_delta = mid - pos[0] - 1
+        g1 = mid
+        g1_delta = pos[-1] - mid
+        obs, rew, done, info = self.env.step((g0, g0_delta,
+                                              g1, g1_delta))
+        self.n_step += 1
+        # use global pos to match obs (will slice again below with global g0, g1 coords)
+        glob_pos = np.arange(len(obs))
+        result_0 = obs[g0:g0+g0_delta+1]
+        result_1 = obs[g1:g1+g1_delta+1]
+        if len(result_0) > 1 and np.any(result_0):
+#           assert np.all(result_0)
+            obs_0, rew_0, done, info_0 = self.split_test(glob_pos[g0: g0+g0_delta+1],
+                                                           obs[g0: g0+g0_delta+1])
+            rew += rew_0
+            if done:
+                return obs, rew, done, info_0
+            obs[g0:g0 + g0_delta + 1] = obs_0
+        if len(result_1) > 1 and np.any(result_1):
+#           assert np.all(result_1)
+            obs_1, rew_1, done, info_1 = self.split_test(glob_pos[g1: g1 + g1_delta+1],
+                                                           obs[g1: g1 + g1_delta+1])
+            rew += rew_1
+            if done:
+                return obs, rew, done, info_1
+            obs[g1:g1 + g1_delta+1] = obs_1
+
+        return obs[pos], rew, done, info
 
 
 class RandAgent(Agent):
@@ -134,7 +196,7 @@ if __name__ == '__main__':
     env = BeamEnv(EnvContext(worker_index=0, env_config={
                     'render': True,
                 }))
-    agents_cls = [RandAgent, LazyAgent]
+    agents_cls = [MergeAgent, SequentialAgent, RandAgent]
     n_trials = 100
     agents_rew = np.zeros(shape=(len(agents_cls), n_trials))
     agents_steps = np.zeros(shape=agents_rew.shape)

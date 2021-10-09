@@ -23,6 +23,7 @@ import random
 import ray
 from ray import tune
 from ray.rllib.agents import ppo
+from ray.rllib.agents.ppo import PPOTrainer
 from ray.rllib.env.env_context import EnvContext
 from ray.rllib.models import ModelCatalog
 from ray.rllib.models.tf.tf_modelv2 import TFModelV2
@@ -57,7 +58,7 @@ parser.add_argument(
 parser.add_argument(
     "--stop-iters",
     type=int,
-    default=50,
+    default=1000,
     help="Number of iterations to train.")
 parser.add_argument(
     "--stop-timesteps",
@@ -83,119 +84,40 @@ parser.add_argument(
     type=int,
     default=7,
 )
+parser.add_argument(
+    "--evaluate",
+    action="store_true",
+    help="Load trained model for evaluation.")
 
 
-#class SimpleCorridor(gym.Env):
-#    """Example of a custom env in which you have to walk down a corridor.
-#
-#    You can configure the length of the corridor via the env config."""
-#
-#    def __init__(self, config: EnvContext):
-#        self.end_pos = config["corridor_length"]
-#        self.cur_pos = 0
-#        self.action_space = Discrete(2)
-#        self.observation_space = Box(
-#            0.0, self.end_pos, shape=(1, ), dtype=np.float32)
-#        # Set the seed. This is only used for the final (reach goal) reward.
-#        self.seed(config.worker_index * config.num_workers)
-#
-#    def reset(self):
-#        self.cur_pos = 0
-#        return [self.cur_pos]
-#
-#    def step(self, action):
-#        assert action in [0, 1], action
-#        if action == 0 and self.cur_pos > 0:
-#            self.cur_pos -= 1
-#        elif action == 1:
-#            self.cur_pos += 1
-#        done = self.cur_pos >= self.end_pos
-#        # Produce a random reward when we reach the goal.
-#        return [self.cur_pos], \
-#            random.random() * 2 if done else -0.1, done, {}
-#
-#    def seed(self, seed=None):
-#        random.seed(seed)
+#def train_ppo(config, reporter):
+#    agent = PPOTrainer(config)
+##   agent.restore("/path/checkpoint_41/checkpoint-41")  # continue training
+#    # training curriculum, start with phase 0
+##   phase = 0
+##   agent.workers.foreach_worker(
+##           lambda ev: ev.foreach_env(
+##               lambda env: env.set_phase(phase)))
+##   episodes = 0
+#    i = 0
+#    while True:
+#        result = agent.train()
+#        if reporter is None:
+#            continue
+#        else:
+#            reporter(**result)
+#        if i % 10 == 0: #save every 10th training iteration
+#            checkpoint_path = agent.save()
+#            print("checkpoint saved at f{checkpoint_path)}")
+#        i+=1
+#        #you can also change the curriculum here
 
+def evaluate(args, config):
+    agent = PPOTrainer(config)
+    checkpoint_path = ''
+    agent.restore(checkpoint_path)
 
-class CustomModel(TFModelV2):
-    """Example of a keras custom model that just delegates to an fc-net."""
-
-    def __init__(self, obs_space, action_space, num_outputs, model_config,
-                 name):
-        super(CustomModel, self).__init__(obs_space, action_space, num_outputs,
-                                          model_config, name)
-        self.model = FullyConnectedNetwork(obs_space, action_space,
-                                           num_outputs, model_config, name)
-
-    def forward(self, input_dict, state, seq_lens):
-        return self.model.forward(input_dict, state, seq_lens)
-
-    def value_function(self):
-        return self.model.value_function()
-
-
-class TorchCustomModel(TorchModelV2, nn.Module):
-    """Example of a PyTorch custom model that just delegates to a fc-net."""
-
-    def __init__(self, obs_space, action_space, num_outputs, model_config,
-                 name):
-        TorchModelV2.__init__(self, obs_space, action_space, num_outputs,
-                              model_config, name)
-        nn.Module.__init__(self)
-
-        self.torch_sub_model = TorchFC(obs_space, action_space, num_outputs,
-                                       model_config, name)
-
-    def forward(self, input_dict, state, seq_lens):
-        input_dict["obs"] = input_dict["obs"].float()
-        fc_out, _ = self.torch_sub_model(input_dict, state, seq_lens)
-        return fc_out, []
-
-    def value_function(self):
-        return torch.reshape(self.torch_sub_model.value_function(), [-1])
-
-
-if __name__ == "__main__":
-    args = parser.parse_args()
-    print(f"Running with following CLI options: {args}")
-
-    ray.init(local_mode=args.local_mode)
-
-    # Can also register the env creator function explicitly with:
-    # register_env("corridor", lambda config: SimpleCorridor(config))
-    ModelCatalog.register_custom_model(
-        "my_model", TorchCustomModel
-        if args.framework == "torch" else CustomModel)
-
-    num_gpus = int(os.environ.get("RLLIB_NUM_GPUS", "0"))
-    # If we don't see any GPUs via the above, we'll manually set num_gpus to 1 if cuda is available
-    if num_gpus == 0 and torch.cuda.is_available():
-        num_gpus = 1
-
-    config = {
-        "env": BeamEnv,  # or "corridor" if registered above
-        "env_config": {
-            "n_beams": 8,
-#           "corridor_length": 5,
-        },
-        # Use GPUs iff `RLLIB_NUM_GPUS` env var set to > 0.
-        "num_gpus": num_gpus,
-        "model": {
-            "use_lstm": True,
-#           "custom_model": "my_model",
-#           "vf_share_layers": True,
-        },
-        "num_workers": args.n_cpu,  # parallelism
-        "framework": args.framework,
-    }
-
-    stop = {
-#       "training_iteration": args.stop_iters,
-        "timesteps_total": args.stop_timesteps,
-#       "episode_reward_mean": args.stop_reward,
-    }
-
+def train(args, config):
     if args.no_tune:
         # manual training with train loop using PPO and fixed learning rate
         if args.run != "PPO":
@@ -217,10 +139,48 @@ if __name__ == "__main__":
     else:
         # automated run with Tune and grid search and TensorBoard
         print("Training automatically with Ray Tune")
-        results = tune.run(args.run, config=config, stop=stop, checkpoint_freq=10, keep_checkpoints_num=1)
+        results = tune.run(args.run, keep_checkpoints_num=10, checkpoint_freq=10, config=config, stop=stop)
 
         if args.as_test:
             print("Checking if learning goals were achieved")
             check_learning_achieved(results, args.stop_reward)
 
     ray.shutdown()
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+    print(f"Running with following CLI options: {args}")
+    ray.init(local_mode=args.local_mode)
+
+    num_gpus = int(os.environ.get("RLLIB_NUM_GPUS", "0"))
+    # If we don't see any GPUs via the above, we'll manually set num_gpus to 1 if cuda is available
+    if num_gpus == 0 and torch.cuda.is_available():
+        num_gpus = 1
+
+    config = {
+        "env": BeamEnv,  # or "corridor" if registered above
+        "env_config": {
+            "n_beams": 16,
+            "n_paths": 4,
+        },
+        # Use GPUs iff `RLLIB_NUM_GPUS` env var set to > 0.
+        "num_gpus": num_gpus,
+        "model": {
+            "use_lstm": True,
+#           "custom_model": "my_model",
+#           "vf_share_layers": True,
+        },
+        "num_workers": args.n_cpu,  # parallelism
+        "framework": args.framework,
+    }
+
+    stop = {
+#       "training_iteration": args.stop_iters,
+        "timesteps_total": args.stop_timesteps,
+#       "episode_reward_mean": args.stop_reward,
+    }
+
+    if args.evaluate:
+        evaluate(args, config)
+    else:
+        train(args, config)

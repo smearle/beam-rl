@@ -2,3 +2,4 @@ ray[rllib]
 pandas
 gym
 numpy
+opencv-python
