@@ -62,7 +62,7 @@ parser.add_argument(
 parser.add_argument(
     "--stop-timesteps",
     type=int,
-    default=1000000,
+    default=10000000,
     help="Number of timesteps to train.")
 parser.add_argument(
     "--stop-reward",
@@ -78,6 +78,11 @@ parser.add_argument(
     "--local-mode",
     action="store_true",
     help="Init Ray in local mode for easier debugging.")
+parser.add_argument(
+    "--n-cpu",
+    type=int,
+    default=7,
+)
 
 
 #class SimpleCorridor(gym.Env):
@@ -171,23 +176,24 @@ if __name__ == "__main__":
     config = {
         "env": BeamEnv,  # or "corridor" if registered above
         "env_config": {
-            "n_beams": 64,
+            "n_beams": 8,
 #           "corridor_length": 5,
         },
         # Use GPUs iff `RLLIB_NUM_GPUS` env var set to > 0.
         "num_gpus": num_gpus,
         "model": {
-            "custom_model": "my_model",
-            "vf_share_layers": True,
+            "use_lstm": True,
+#           "custom_model": "my_model",
+#           "vf_share_layers": True,
         },
-        "num_workers": 1,  # parallelism
+        "num_workers": args.n_cpu,  # parallelism
         "framework": args.framework,
     }
 
     stop = {
-        "training_iteration": args.stop_iters,
+#       "training_iteration": args.stop_iters,
         "timesteps_total": args.stop_timesteps,
-        "episode_reward_mean": args.stop_reward,
+#       "episode_reward_mean": args.stop_reward,
     }
 
     if args.no_tune:
@@ -211,7 +217,7 @@ if __name__ == "__main__":
     else:
         # automated run with Tune and grid search and TensorBoard
         print("Training automatically with Ray Tune")
-        results = tune.run(args.run, config=config, stop=stop)
+        results = tune.run(args.run, config=config, stop=stop, checkpoint_freq=10, keep_checkpoints_num=1)
 
         if args.as_test:
             print("Checking if learning goals were achieved")
