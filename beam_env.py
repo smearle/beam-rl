@@ -118,6 +118,14 @@ class Agent(object):
     def act(self, obs):
         raise NotImplementedError
 
+class NeuralAgent(Agent):
+    def __init__(self, env, nn):
+        super().__init__(env)
+        self.nn = nn
+
+    def act(self, obs):
+        TT()
+        return self.nn.compute_actions()
 
 class SequentialAgent(Agent):
     def __init__(self, env):

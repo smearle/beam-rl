@@ -88,7 +88,12 @@ parser.add_argument(
     "--evaluate",
     action="store_true",
     help="Load trained model for evaluation.")
-
+parser.add_argument(
+    "--model-path",
+    type=str,
+    default=None,
+    help="Location of a saved model for re-loading",
+)
 
 #def train_ppo(config, reporter):
 #    agent = PPOTrainer(config)
@@ -112,10 +117,16 @@ parser.add_argument(
 #        i+=1
 #        #you can also change the curriculum here
 
+from beam_env import NeuralAgent
+
 def evaluate(args, config):
+    config["env_config"]["render"] = True
+    env = config["env"](config["env_config"])
     agent = PPOTrainer(config)
-    checkpoint_path = ''
-    agent.restore(checkpoint_path)
+    agent.restore(args.model_path)
+    agent.train()
+#   nn_agent = NeuralAgent(env, agent)
+#   nn_agent.play_episode()
 
 def train(args, config):
     if args.no_tune:
@@ -162,6 +173,7 @@ if __name__ == "__main__":
         "env_config": {
             "n_beams": 16,
             "n_paths": 4,
+            "render": False,
         },
         # Use GPUs iff `RLLIB_NUM_GPUS` env var set to > 0.
         "num_gpus": num_gpus,
