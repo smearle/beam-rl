@@ -118,7 +118,8 @@ class LazyAgent(Agent):
 
     def act(self, obs):
         '''Test one beam at a time.'''
-        return self.env.step((self.n_step, self.n_step + 1))
+        return self.env.step((self.n_step*2, self.n_step*2+1,
+                              self.n_step*2+1, (self.n_step+1)*2))
 
 
 class RandAgent(Agent):
