@@ -3,3 +3,6 @@ pandas
 gym
 numpy
 opencv-python
+qdpy
+cma
+tqdm
